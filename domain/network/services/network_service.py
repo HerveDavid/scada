@@ -61,7 +61,13 @@ class NetworkService:
 
         # Configure diagram parameters
         params = pn.SldParameters(
-            use_name=True, topological_coloring=True, component_library="Convergence"
+            use_name=False,
+            center_name=False,
+            diagonal_label=False,
+            nodes_infos=False,
+            tooltip_enabled=False,
+            topological_coloring=True,
+            component_library="Convergence",
         )
 
         # Create temporary files for SVG and metadata
@@ -95,6 +101,108 @@ class NetworkService:
                 os.remove(svg_path)
             if os.path.exists(metadata_path):
                 os.remove(metadata_path)
+
+    @staticmethod
+    async def generate_network_area_diagram(
+        network,
+        element_id=None,
+        depth=None,
+        low_nominal_voltage_bound=None,
+        high_nominal_voltage_bound=None,
+    ):
+        """
+        Generates a network area diagram for a network element.
+        Args:
+            network: The network object
+            element_id: The voltage level ID as the center of the sub network (optional)
+            depth: The depth to control the size of the sub network (optional)
+            low_nominal_voltage_bound: Lower bound for nominal voltage filtering (optional)
+            high_nominal_voltage_bound: Upper bound for nominal voltage filtering (optional)
+        Returns:
+            tuple: (SVG diagram content, JSON metadata)
+        """
+        import tempfile
+        import os
+        import pypowsybl.network as pn
+
+        # Configure diagram parameters
+        params = pn.NadParameters(
+            edge_name_displayed=True,
+            id_displayed=False,
+            edge_info_along_edge=True,
+            power_value_precision=1,
+            angle_value_precision=1,
+            current_value_precision=0,
+            voltage_value_precision=1,
+            bus_legend=True,
+            substation_description_displayed=True,
+        )
+
+        # Create temporary files for SVG
+        with tempfile.NamedTemporaryFile(suffix=".svg", delete=False) as temp_svg:
+            svg_path = temp_svg.name
+
+        try:
+            # Generate the appropriate network area diagram based on provided parameters
+            if element_id and depth:
+                if low_nominal_voltage_bound and high_nominal_voltage_bound:
+                    # Use voltage level ID, depth, and voltage bounds
+                    network.write_network_area_diagram_svg(
+                        svg_path,
+                        element_id,
+                        depth,
+                        low_nominal_voltage_bound=low_nominal_voltage_bound,
+                        high_nominal_voltage_bound=high_nominal_voltage_bound,
+                        nad_parameters=params,
+                    )
+                else:
+                    # Use voltage level ID and depth only
+                    network.write_network_area_diagram_svg(
+                        svg_path, element_id, depth, nad_parameters=params
+                    )
+            elif low_nominal_voltage_bound and high_nominal_voltage_bound:
+                # Use only voltage bounds
+                network.write_network_area_diagram_svg(
+                    svg_path,
+                    low_nominal_voltage_bound=low_nominal_voltage_bound,
+                    high_nominal_voltage_bound=high_nominal_voltage_bound,
+                    nad_parameters=params,
+                )
+            else:
+                # Generate for the full network
+                network.write_network_area_diagram_svg(svg_path)
+
+            # Read the generated SVG content
+            with open(svg_path, "r") as svg_file:
+                svg_content = svg_file.read()
+
+            # Create metadata with the displayed voltage levels
+            metadata = {}
+            if element_id and depth:
+                displayed_vls = (
+                    network.get_network_area_diagram_displayed_voltage_levels(
+                        element_id, depth
+                    )
+                )
+                metadata["displayed_voltage_levels"] = (
+                    displayed_vls.tolist()
+                    if hasattr(displayed_vls, "tolist")
+                    else displayed_vls
+                )
+
+            # Add filter information to metadata
+            if low_nominal_voltage_bound or high_nominal_voltage_bound:
+                metadata["filters"] = {
+                    "low_nominal_voltage_bound": low_nominal_voltage_bound,
+                    "high_nominal_voltage_bound": high_nominal_voltage_bound,
+                }
+
+            return svg_content, metadata
+
+        finally:
+            # Clean up temporary files
+            if os.path.exists(svg_path):
+                os.remove(svg_path)
 
     @staticmethod
     async def convert_network_to_json(network):
