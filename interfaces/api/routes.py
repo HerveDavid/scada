@@ -81,7 +81,7 @@ def register_api_routes(app, network_service):
             app.logger.error(f"Error when getting network JSON: {str(e)}")
             return {"error": f"Unable to get network JSON: {str(e)}"}, 500
 
-    @app.route("/api/v1/config/current", methods=["GET"])
+    @app.route("/api/v1/config/iidm/metadata", methods=["GET"])
     async def get_current_network_info():
         """
         Endpoint to get information about the currently loaded network.
@@ -206,161 +206,116 @@ def register_api_routes(app, network_service):
             app.logger.error(f"Error when retrieving metadata for {id}: {str(e)}")
             return {"error": f"Unable to retrieve metadata: {str(e)}"}, 500
 
-    @app.route("/api/v1/network/diagram/area", methods=["GET"])
-    async def get_network_area_diagram():
+    @app.route("/api/v1/network/substations", methods=["GET"])
+    async def get_network_substations():
         """
-        Endpoint to generate and return a network area diagram (SVG).
-
-        Query parameters:
-            voltage_level_id: Optional ID of the voltage level to be used as center
-            depth: Optional depth to control the size of the sub network
-            low_nominal_voltage: Optional lower bound for nominal voltage filtering
-            high_nominal_voltage: Optional upper bound for nominal voltage filtering
+        Endpoint to get all substations in the network.
 
         Returns:
-            The SVG diagram or an error message
+            A JSON list of all substations or an error message if no network is available
         """
         try:
+            # Check if a network is available
             if not network_service.current_network:
                 return {"error": "No network available"}, 404
 
-            # Get query parameters
-            voltage_level_id = request.args.get("voltage_level_id")
-            depth = request.args.get("depth")
-            low_nominal_voltage = request.args.get("low_nominal_voltage")
-            high_nominal_voltage = request.args.get("high_nominal_voltage")
+            # Get substations JSON
+            substations_json, error = await network_service.get_substations()
 
-            # Convert parameters to the correct types
-            if depth:
-                try:
-                    depth = int(depth)
-                except ValueError:
-                    return {"error": "Depth must be an integer"}, 400
+            if error:
+                return {"error": f"Error retrieving substations: {error}"}, 500
 
-            if low_nominal_voltage:
-                try:
-                    low_nominal_voltage = float(low_nominal_voltage)
-                except ValueError:
-                    return {"error": "Low nominal voltage must be a number"}, 400
-
-            if high_nominal_voltage:
-                try:
-                    high_nominal_voltage = float(high_nominal_voltage)
-                except ValueError:
-                    return {"error": "High nominal voltage must be a number"}, 400
-
-            # Check if voltage_level_id exists in the network
-            if voltage_level_id and not await network_service.element_exists(
-                voltage_level_id
-            ):
-                return {
-                    "error": f"The voltage level identifier '{voltage_level_id}' doesn't exist in the network"
-                }, 404
-
-            # Generate the SVG and metadata
-            svg_content, metadata = await network_service.generate_network_area_diagram(
-                voltage_level_id,
-                depth,
-                low_nominal_voltage,
-                high_nominal_voltage,
-            )
-
-            if svg_content is None:
-                return {
-                    "error": "Failed to generate area diagram",
-                    "details": metadata.get("error", "Unknown error"),
-                }, 500
-
-            # Return format according to the request parameter
-            if request.args.get("format") == "json":
-                # Return SVG + metadata in JSON format
-                return jsonify({"svg": svg_content, "metadata": metadata})
-            else:
-                # Return the SVG directly with the proper headers
-                response = await make_response(svg_content)
-                response.headers["Content-Type"] = "image/svg+xml"
-                filename = voltage_level_id or "network"
-                response.headers["Content-Disposition"] = (
-                    f"inline; filename={filename}_area_diagram.svg"
-                )
-                # Add metadata in a custom header
-                response.headers["X-Diagram-Metadata"] = json.dumps(metadata)
-
-                return response
+            return jsonify(substations_json)
 
         except Exception as e:
             # Log the error for debugging
-            app.logger.error(f"Error when generating network area diagram: {str(e)}")
-            return {"error": f"Unable to generate network area diagram: {str(e)}"}, 500
+            app.logger.error(f"Error when getting substations: {str(e)}")
+            return {"error": f"Unable to get substations: {str(e)}"}, 500
 
-    @app.route("/api/v1/network/diagram/area/metadata", methods=["GET"])
-    async def get_network_area_diagram_metadata():
+    @app.route("/api/v1/network/voltage-levels", methods=["GET"])
+    async def get_network_voltage_levels():
         """
-        Endpoint to get only the metadata of a network area diagram.
+        Endpoint to get all voltage levels in the network.
 
-        Query parameters:
-            voltage_level_id: Optional ID of the voltage level to be used as center
-            depth: Optional depth to control the size of the sub network
-            low_nominal_voltage: Optional lower bound for nominal voltage filtering
-            high_nominal_voltage: Optional upper bound for nominal voltage filtering
+        Returns:
+            A JSON list of all voltage levels or an error message if no network is available
         """
         try:
+            # Check if a network is available
             if not network_service.current_network:
                 return {"error": "No network available"}, 404
 
-            # Get query parameters
-            voltage_level_id = request.args.get("voltage_level_id")
-            depth = request.args.get("depth")
-            low_nominal_voltage = request.args.get("low_nominal_voltage")
-            high_nominal_voltage = request.args.get("high_nominal_voltage")
+            # Get voltage levels JSON
+            voltage_levels_json, error = await network_service.get_voltage_levels()
 
-            # Convert parameters to the correct types
-            if depth:
-                try:
-                    depth = int(depth)
-                except ValueError:
-                    return {"error": "Depth must be an integer"}, 400
+            if error:
+                return {"error": f"Error retrieving voltage levels: {error}"}, 500
 
-            if low_nominal_voltage:
-                try:
-                    low_nominal_voltage = float(low_nominal_voltage)
-                except ValueError:
-                    return {"error": "Low nominal voltage must be a number"}, 400
-
-            if high_nominal_voltage:
-                try:
-                    high_nominal_voltage = float(high_nominal_voltage)
-                except ValueError:
-                    return {"error": "High nominal voltage must be a number"}, 400
-
-            # Check if voltage_level_id exists in the network
-            if voltage_level_id and not await network_service.element_exists(
-                voltage_level_id
-            ):
-                return {
-                    "error": f"The voltage level identifier '{voltage_level_id}' doesn't exist in the network"
-                }, 404
-
-            # Get only the metadata
-            _, metadata = await network_service.generate_network_area_diagram(
-                voltage_level_id,
-                depth,
-                low_nominal_voltage,
-                high_nominal_voltage,
-            )
-
-            if metadata is None or "error" in metadata:
-                return {
-                    "error": "Failed to generate metadata",
-                    "details": metadata.get("error", "Unknown error"),
-                }, 500
-
-            return jsonify(metadata)
+            return jsonify(voltage_levels_json)
 
         except Exception as e:
+            # Log the error for debugging
+            app.logger.error(f"Error when getting voltage levels: {str(e)}")
+            return {"error": f"Unable to get voltage levels: {str(e)}"}, 500
+
+    @app.route(
+        "/api/v1/network/substations/<string:substation_id>/voltage-levels",
+        methods=["GET"],
+    )
+    async def get_voltage_levels_for_substation(substation_id):
+        """
+        Endpoint to get all voltage levels belonging to a specific substation.
+
+        Args:
+            substation_id: The ID of the substation
+
+        Returns:
+            A JSON list of voltage levels for the specified substation or an error message
+        """
+        try:
+            # Check if a network is available
+            if not network_service.current_network:
+                return {"error": "No network available"}, 404
+
+            # Check if the substation exists
+            substations_df = network_service.current_network.get_substations()
+            if substation_id not in substations_df.index:
+                return {"error": f"Substation '{substation_id}' not found"}, 404
+
+            # Get all voltage levels
+            voltage_levels_df = network_service.current_network.get_voltage_levels()
+
+            # Filter voltage levels belonging to the specified substation
+            vl_for_substation = voltage_levels_df[
+                voltage_levels_df["substation_id"] == substation_id
+            ]
+
+            # Format as JSON response
+            result = {"substation_id": substation_id, "voltage_levels": []}
+
+            for vl_id, vl in vl_for_substation.iterrows():
+                vl_data = {
+                    "id": vl_id,
+                    "name": vl.get("name", ""),
+                    "nominal_v": vl.get("nominal_v", 0),
+                    "high_voltage_limit": vl.get("high_voltage_limit", 0),
+                    "low_voltage_limit": vl.get("low_voltage_limit", 0),
+                    "topology_kind": vl.get("topology_kind", ""),
+                }
+
+                # Add optional attributes if available
+                if "fictitious" in vl:
+                    vl_data["fictitious"] = bool(vl["fictitious"])
+
+                result["voltage_levels"].append(vl_data)
+
+            return jsonify(result)
+
+        except Exception as e:
+            # Log the error for debugging
             app.logger.error(
-                f"Error when retrieving network area diagram metadata: {str(e)}"
+                f"Error when getting voltage levels for substation {substation_id}: {str(e)}"
             )
             return {
-                "error": f"Unable to retrieve network area diagram metadata: {str(e)}"
+                "error": f"Unable to get voltage levels for substation: {str(e)}"
             }, 500

@@ -263,80 +263,6 @@ class NetworkService:
         except Exception as e:
             return None, {"error": str(e)}
 
-    async def generate_network_area_diagram(
-        self,
-        element_id: Optional[str] = None,
-        depth: Optional[int] = None,
-        low_nominal_voltage_bound: Optional[float] = None,
-        high_nominal_voltage_bound: Optional[float] = None,
-    ) -> Tuple[Optional[str], Optional[Dict[str, Any]]]:
-        """Generate a network area diagram.
-
-        Args:
-            element_id: The voltage level ID as the center of the sub network
-            depth: The depth to control the size of the sub network
-            low_nominal_voltage_bound: Lower bound for nominal voltage filtering
-            high_nominal_voltage_bound: Upper bound for nominal voltage filtering
-
-        Returns:
-            tuple: (SVG diagram content, JSON metadata) or (None, None) on error
-        """
-        if not self.current_network:
-            return None, None
-
-        # Configure diagram parameters
-        params = pn.NadParameters(**self.NAD_PARAMETERS)
-
-        try:
-            with self._temp_file(".svg") as svg_path:
-                kwargs = {"nad_parameters": params}
-
-                # Add optional parameters if provided
-                if low_nominal_voltage_bound is not None:
-                    kwargs["low_nominal_voltage_bound"] = low_nominal_voltage_bound
-                if high_nominal_voltage_bound is not None:
-                    kwargs["high_nominal_voltage_bound"] = high_nominal_voltage_bound
-
-                # Generate the appropriate network area diagram based on provided parameters
-                if element_id and depth:
-                    self.current_network.write_network_area_diagram_svg(
-                        svg_path, element_id, depth, **kwargs
-                    )
-                else:
-                    self.current_network.write_network_area_diagram_svg(
-                        svg_path, **kwargs
-                    )
-
-                # Read the generated SVG content
-                with open(svg_path, "r") as svg_file:
-                    svg_content = svg_file.read()
-
-                # Create metadata with the displayed voltage levels
-                metadata = {}
-                if element_id and depth:
-                    displayed_vls = self.current_network.get_network_area_diagram_displayed_voltage_levels(
-                        element_id, depth
-                    )
-                    metadata["displayed_voltage_levels"] = (
-                        displayed_vls.tolist()
-                        if hasattr(displayed_vls, "tolist")
-                        else displayed_vls
-                    )
-
-                # Add filter information to metadata
-                if (
-                    low_nominal_voltage_bound is not None
-                    or high_nominal_voltage_bound is not None
-                ):
-                    metadata["filters"] = {
-                        "low_nominal_voltage_bound": low_nominal_voltage_bound,
-                        "high_nominal_voltage_bound": high_nominal_voltage_bound,
-                    }
-
-                return svg_content, metadata
-        except Exception as e:
-            return None, {"error": str(e)}
-
     async def convert_network_to_json(
         self,
     ) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
@@ -362,3 +288,77 @@ class NetworkService:
             return None, f"Error parsing JSON: {str(je)}"
         except Exception as e:
             return None, f"Error converting network to JSON: {str(e)}"
+
+    async def get_substations(self) -> Tuple[Dict[str, Any], Optional[str]]:
+        """Get a JSON representation of all substations in the network.
+
+        Returns:
+            tuple: (JSON content, error message) where one will be None
+        """
+        if not self.current_network:
+            return None, "No network loaded"
+
+        try:
+            # Get substations dataframe
+            substations_df = self.current_network.get_substations()
+
+            # Create the result dictionary
+            result = {"substations": []}
+
+            # Process each substation
+            for substation_id, substation in substations_df.iterrows():
+                substation_data = {
+                    "id": substation_id,
+                    "name": substation.get("name", ""),
+                    "country": substation.get("country", ""),
+                    "tso": substation.get("TSO", ""),
+                    "geo_tags": substation.get("geo_tags", ""),
+                }
+
+                # Add optional attributes if available
+                if "fictitious" in substation:
+                    substation_data["fictitious"] = bool(substation["fictitious"])
+
+                result["substations"].append(substation_data)
+
+            return result, None
+        except Exception as e:
+            return None, f"Error retrieving substations: {str(e)}"
+
+    async def get_voltage_levels(self) -> Tuple[Dict[str, Any], Optional[str]]:
+        """Get a JSON representation of all voltage levels in the network.
+
+        Returns:
+            tuple: (JSON content, error message) where one will be None
+        """
+        if not self.current_network:
+            return None, "No network loaded"
+
+        try:
+            # Get voltage levels dataframe
+            voltage_levels_df = self.current_network.get_voltage_levels()
+
+            # Create the result dictionary
+            result = {"voltage_levels": []}
+
+            # Process each voltage level
+            for vl_id, vl in voltage_levels_df.iterrows():
+                vl_data = {
+                    "id": vl_id,
+                    "name": vl.get("name", ""),
+                    "substation_id": vl.get("substation_id", ""),
+                    "nominal_v": vl.get("nominal_v", 0),
+                    "high_voltage_limit": vl.get("high_voltage_limit", 0),
+                    "low_voltage_limit": vl.get("low_voltage_limit", 0),
+                    "topology_kind": vl.get("topology_kind", ""),
+                }
+
+                # Add optional attributes if available
+                if "fictitious" in vl:
+                    vl_data["fictitious"] = bool(vl["fictitious"])
+
+                result["voltage_levels"].append(vl_data)
+
+            return result, None
+        except Exception as e:
+            return None, f"Error retrieving voltage levels: {str(e)}"
