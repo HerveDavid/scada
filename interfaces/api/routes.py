@@ -1,14 +1,20 @@
 from quart import request, jsonify, make_response, json
-from domain.network.services.network_service import NetworkService
-
 import os
-
+import uuid
+import traceback
 
 UPLOAD_FOLDER = "uploads"
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
 
-def register_api_routes(app):
+def register_api_routes(app, network_service):
+    """Register API routes for the application.
+
+    Args:
+        app: The Quart application
+        network_service: Instance of NetworkService
+    """
+
     @app.route("/api/v1/config/iidm", methods=["POST"])
     async def upload_iidm():
         """Endpoint to receive a large IIDM file via POST and convert it to JSON."""
@@ -21,20 +27,17 @@ def register_api_routes(app):
             file = files.get("file")
 
             # Generate a unique filename
-            import uuid
-
             unique_filename = f"{uuid.uuid4().hex}.xiidm"
-            destination = os.path.join(UPLOAD_FOLDER, unique_filename)
+            destination = os.path.join(network_service.UPLOAD_FOLDER, unique_filename)
 
             # Write the file to disk using direct stream
-            # but ensure the file is processed in chunks
             await file.save(destination)
 
             # Process the file
             app.logger.info(
                 f"File received and saved to {destination}. Processing in progress..."
             )
-            error = await NetworkService.process_iidm_file(destination)
+            error = await network_service.process_iidm_file(destination)
 
             if error:
                 os.remove(destination)
@@ -42,11 +45,12 @@ def register_api_routes(app):
 
             app.logger.info(f"File received and successfully saved to {destination}.")
 
-            return {"status": "IIDM file loaded"}, 201
+            # After successful upload, clean up old files
+            await network_service.cleanup_old_networks()
+
+            return {"status": "IIDM file loaded", "file_path": destination}, 201
 
         except Exception as e:
-            import traceback
-
             error_details = traceback.format_exc()
             app.logger.error(f"Error during upload: {str(e)}\n{error_details}")
             return {"error": f"Error during upload: {str(e)}"}, 500
@@ -60,14 +64,12 @@ def register_api_routes(app):
             The network in JSON format or an error message if no network is available
         """
         try:
-            # Get the current network
-            network = await NetworkService.get_current_network()
-
-            if not network:
+            # Check if a network is available
+            if not network_service.current_network:
                 return {"error": "No network available"}, 404
 
             # Convert the network to JSON
-            json_content, error = await NetworkService.convert_network_to_json(network)
+            json_content, error = await network_service.convert_network_to_json()
 
             if error:
                 return {"error": f"Error converting network to JSON: {error}"}, 500
@@ -78,6 +80,49 @@ def register_api_routes(app):
             # Log the error for debugging
             app.logger.error(f"Error when getting network JSON: {str(e)}")
             return {"error": f"Unable to get network JSON: {str(e)}"}, 500
+
+    @app.route("/api/v1/config/current", methods=["GET"])
+    async def get_current_network_info():
+        """
+        Endpoint to get information about the currently loaded network.
+
+        Returns:
+            Information about the current network or an error message if no network is available
+        """
+        try:
+            if not network_service.current_network:
+                return {"status": "No network loaded"}, 404
+
+            # Basic network info
+            info = {
+                "status": "Network loaded",
+                "file_path": network_service.current_file_path,
+                "filename": os.path.basename(network_service.current_file_path)
+                if network_service.current_file_path
+                else None,
+            }
+
+            try:
+                # Get additional network information
+                substations = network_service.current_network.get_substations()
+                voltage_levels = network_service.current_network.get_voltage_levels()
+                lines = network_service.current_network.get_lines()
+
+                info.update(
+                    {
+                        "substations_count": len(substations),
+                        "voltage_levels_count": len(voltage_levels),
+                        "lines_count": len(lines),
+                    }
+                )
+            except Exception as e:
+                info["warning"] = f"Error retrieving detailed network info: {str(e)}"
+
+            return jsonify(info)
+
+        except Exception as e:
+            app.logger.error(f"Error when getting current network info: {str(e)}")
+            return {"error": f"Unable to get current network info: {str(e)}"}, 500
 
     @app.route("/api/v1/network/diagram/line/<string:id>", methods=["GET"])
     async def get_single_line_diagram(id):
@@ -91,22 +136,26 @@ def register_api_routes(app):
             The SVG diagram or an error message if the ID doesn't exist
         """
         try:
-            # Get the current network
-            network = await NetworkService.get_current_network()
-
-            if not network:
+            # Check if a network is available
+            if not network_service.current_network:
                 return {"error": "No network available"}, 404
 
             # Check if the ID exists in the network
-            if not await NetworkService.element_exists(network, id):
+            if not await network_service.element_exists(id):
                 return {
                     "error": f"The identifier '{id}' doesn't exist in the network"
                 }, 404
 
             # Generate the SVG and metadata
-            svg_content, metadata = await NetworkService.generate_single_line_diagram(
-                network, id
+            svg_content, metadata = await network_service.generate_single_line_diagram(
+                id
             )
+
+            if svg_content is None:
+                return {
+                    "error": "Failed to generate diagram",
+                    "details": metadata.get("error", "Unknown error"),
+                }, 500
 
             # Return format according to the request parameter
             if request.args.get("format") == "json":
@@ -135,17 +184,21 @@ def register_api_routes(app):
         Endpoint to get only the metadata of a diagram.
         """
         try:
-            network = await NetworkService.get_current_network()
-
-            if not network:
+            if not network_service.current_network:
                 return {"error": "No network available"}, 404
 
-            if not await NetworkService.element_exists(network, id):
+            if not await network_service.element_exists(id):
                 return {
                     "error": f"The identifier '{id}' doesn't exist in the network"
                 }, 404
 
-            _, metadata = await NetworkService.generate_single_line_diagram(network, id)
+            _, metadata = await network_service.generate_single_line_diagram(id)
+
+            if metadata is None or "error" in metadata:
+                return {
+                    "error": "Failed to generate metadata",
+                    "details": metadata.get("error", "Unknown error"),
+                }, 500
 
             return jsonify(metadata)
 
@@ -168,10 +221,7 @@ def register_api_routes(app):
             The SVG diagram or an error message
         """
         try:
-            # Get the current network
-            network = await NetworkService.get_current_network()
-
-            if not network:
+            if not network_service.current_network:
                 return {"error": "No network available"}, 404
 
             # Get query parameters
@@ -200,21 +250,26 @@ def register_api_routes(app):
                     return {"error": "High nominal voltage must be a number"}, 400
 
             # Check if voltage_level_id exists in the network
-            if voltage_level_id and not await NetworkService.element_exists(
-                network, voltage_level_id
+            if voltage_level_id and not await network_service.element_exists(
+                voltage_level_id
             ):
                 return {
                     "error": f"The voltage level identifier '{voltage_level_id}' doesn't exist in the network"
                 }, 404
 
             # Generate the SVG and metadata
-            svg_content, metadata = await NetworkService.generate_network_area_diagram(
-                network,
+            svg_content, metadata = await network_service.generate_network_area_diagram(
                 voltage_level_id,
                 depth,
                 low_nominal_voltage,
                 high_nominal_voltage,
             )
+
+            if svg_content is None:
+                return {
+                    "error": "Failed to generate area diagram",
+                    "details": metadata.get("error", "Unknown error"),
+                }, 500
 
             # Return format according to the request parameter
             if request.args.get("format") == "json":
@@ -250,9 +305,7 @@ def register_api_routes(app):
             high_nominal_voltage: Optional upper bound for nominal voltage filtering
         """
         try:
-            network = await NetworkService.get_current_network()
-
-            if not network:
+            if not network_service.current_network:
                 return {"error": "No network available"}, 404
 
             # Get query parameters
@@ -281,21 +334,26 @@ def register_api_routes(app):
                     return {"error": "High nominal voltage must be a number"}, 400
 
             # Check if voltage_level_id exists in the network
-            if voltage_level_id and not await NetworkService.element_exists(
-                network, voltage_level_id
+            if voltage_level_id and not await network_service.element_exists(
+                voltage_level_id
             ):
                 return {
                     "error": f"The voltage level identifier '{voltage_level_id}' doesn't exist in the network"
                 }, 404
 
             # Get only the metadata
-            _, metadata = await NetworkService.generate_network_area_diagram(
-                network,
+            _, metadata = await network_service.generate_network_area_diagram(
                 voltage_level_id,
                 depth,
                 low_nominal_voltage,
                 high_nominal_voltage,
             )
+
+            if metadata is None or "error" in metadata:
+                return {
+                    "error": "Failed to generate metadata",
+                    "details": metadata.get("error", "Unknown error"),
+                }, 500
 
             return jsonify(metadata)
 
