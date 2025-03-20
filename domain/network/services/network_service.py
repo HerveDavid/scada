@@ -15,13 +15,15 @@ class NetworkService:
 
     # Configuration constants
     SLD_PARAMETERS = {
-        "use_name": False,
-        "center_name": False,
-        "diagonal_label": False,
-        "nodes_infos": False,
-        "tooltip_enabled": False,
+        "use_name": True,
+        "center_name": True,
+        "diagonal_label": True,
+        "nodes_infos": True,
+        "tooltip_enabled": True,
         "topological_coloring": True,
+        "display_current_feeder_info": True,
         "component_library": "Convergence",
+        "active_power_unit": "MW",
     }
 
     NAD_PARAMETERS = {
